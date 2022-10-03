@@ -1,0 +1,8 @@
+template_version: 1
+strategy: null
+connector: null
+market: null
+order_amount: null
+market_swing: null
+ma_crossover: null
+sell_markup: null
