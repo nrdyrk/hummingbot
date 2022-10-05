@@ -7,7 +7,7 @@ from typing import List
 import requests
 
 from hummingbot.core.data_type.order_candidate import OrderCandidate
-from hummingbot.core.event.events import OrderType, TradeType
+from hummingbot.core.event.events import OrderFilledEvent, OrderType, TradeType
 from hummingbot.core.rate_oracle.rate_oracle import RateOracle
 from hummingbot.logger import HummingbotLogger
 from hummingbot.strategy.market_trading_pair_tuple import MarketTradingPairTuple
@@ -50,7 +50,7 @@ class MovingAverageCrossover(StrategyPyBase):
             else:
                 self.logger().info(f"{self._exchange.name} ready. Happy trading!")
 
-        # new code
+        # Create buy orders (Proposals)
         proposal: List[OrderCandidate] = self.create_proposal()
         proposal = self._budget_checker.adjust_candidates(proposal, all_or_none=False)
         if proposal:
@@ -69,10 +69,13 @@ class MovingAverageCrossover(StrategyPyBase):
         # Calculate the average of the X element prior to the last element
         avg_close = mean(daily_closes[start_index:-1])
         proposal = []
+
         # If the current price (the last close) is below the dip, add a new order candidate to the proposal
-        market_dip_criteria = daily_closes[-1] > avg_close * (Decimal("1") - (Decimal(self._market_swing) / Decimal("100")))
+        market_dip_criteria = daily_closes[-1] < avg_close * (Decimal("1") - (Decimal(self._market_swing) / Decimal("100")))
+
         buy_signal = "BUY" if market_dip_criteria else "IDLE"
         print(f"AVG ({self._ma_crossover_period} day): {avg_close} | LAST: {daily_closes[-1]} | {buy_signal}")
+
         if market_dip_criteria:
             order_price = self._exchange.get_price(self._trading_pair, False)
             amount = self._order_amount / order_price
@@ -97,6 +100,9 @@ class MovingAverageCrossover(StrategyPyBase):
                 self.last_ordered_ts = time.time()
                 self.logger().info(f"BUY ORDER: {order_id}")
                 self.logger().info(f"BUY {self._trading_pair} - {order_candidate.amount} @ {order_candidate.price}")
+
+    # def create_sell_order():
+    #     return
 
     def _get_daily_close_list(self, trading_pair: str) -> List[Decimal]:
         """
@@ -130,3 +136,47 @@ class MovingAverageCrossover(StrategyPyBase):
 
     def convert_number_to_decimal(self, number) -> Decimal:
         return Decimal(number) / Decimal("100")
+
+    def log_complete_order(self, order_completed_event):
+        """
+        Output log for completed order.
+        :param order_completed_event: Order completed event
+        """
+        order_id: str = order_completed_event.order_id
+        market_info = self.order_tracker.get_market_pair_from_order_id(order_id)
+
+        if market_info is not None:
+            limit_order_record = self.order_tracker.get_limit_order(market_info, order_id)
+            order_type = "buy" if limit_order_record.is_buy else "sell"
+            self.log_with_clock(
+                logging.INFO,
+                f"({market_info.trading_pair}) Limit {order_type} order {order_id} "
+                f"({limit_order_record.quantity} {limit_order_record.base_currency} @ "
+                f"{limit_order_record.price} {limit_order_record.quote_currency}) has been filled."
+            )
+
+    def did_complete_buy_order(self, order_completed_event):
+        """
+        Output log for completed buy order.
+        :param order_completed_event: Order completed event
+        """
+        self.log_complete_order(order_completed_event)
+
+    def did_complete_sell_order(self, order_completed_event):
+        """
+        Output log for completed sell order.
+        :param order_completed_event: Order completed event
+        """
+        self.log_complete_order(order_completed_event)
+
+    def did_fill_order(self, order_filled_event):
+        """
+        Output log for filled order.
+        :param order_filled_event: Order filled event
+        """
+        order_id: str = order_filled_event.order_id
+        market_info = self.order_tracker.get_shadow_market_pair_from_order_id(order_id)
+
+        if market_info is not None:
+            self.logger().info(f"({market_info.trading_pair}) Limit {order_filled_event.trade_type.name.lower()} order of "
+                               f"{order_filled_event.amount} {market_info.base_asset} filled.")
