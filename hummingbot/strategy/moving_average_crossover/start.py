@@ -1,6 +1,6 @@
 from hummingbot.strategy.market_trading_pair_tuple import MarketTradingPairTuple
 from hummingbot.strategy.moving_average_crossover import MovingAverageCrossover
-from hummingbot.strategy.moving_average_crossover import moving_average_crossover_config_map as c_map
+from hummingbot.strategy.moving_average_crossover.moving_average_crossover_config_map import (moving_average_crossover_config_map as c_map)
 
 
 def start(self):
@@ -13,10 +13,13 @@ def start(self):
         sell_markup = c_map.get("sell_markup").value
 
         self._initialize_markets([(connector, [trading_pair])])
+        base, quote = trading_pair.split("-")
+        market_info = MarketTradingPairTuple(self.markets[connector], trading_pair, base, quote)
 
         exchange = self.markets[connector]
 
         self.strategy = MovingAverageCrossover(exchange=exchange,
+                                               market_info=market_info,
                                                trading_pair=trading_pair,
                                                order_amount=order_amount,
                                                market_swing=market_swing,
