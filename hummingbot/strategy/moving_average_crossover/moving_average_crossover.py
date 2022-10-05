@@ -101,8 +101,23 @@ class MovingAverageCrossover(StrategyPyBase):
                 self.logger().info(f"BUY ORDER: {order_id}")
                 self.logger().info(f"BUY {self._trading_pair} - {order_candidate.amount} @ {order_candidate.price}")
 
-    # def create_sell_order():
-    #     return
+    def create_sell_order_candidate(self, order_completed_event):
+
+        order_id: str = order_completed_event.order_id
+        market_info = self.order_tracker.get_market_pair_from_order_id(order_id)
+
+        if market_info is not None:
+            limit_order_record = self.order_tracker.get_limit_order(market_info, order_id)
+            if limit_order_record.is_buy:
+                # order_candidate = OrderCandidate(self._trading_pair, False, OrderType.LIMIT, TradeType.SELL, amount, order_price)
+                sell_price = limit_order_record.price + (Decimal(limit_order_record.price) * Decimal(self._sell_markup))
+                amount = self._order_amount / sell_price
+                order_id = self.sell_with_specific_market(
+                    market_trading_pair_tuple=self._market_info,
+                    amount=amount,
+                    order_type=OrderType.LIMIT,
+                    price=sell_price,
+                )
 
     def _get_daily_close_list(self, trading_pair: str) -> List[Decimal]:
         """
@@ -161,6 +176,22 @@ class MovingAverageCrossover(StrategyPyBase):
         :param order_completed_event: Order completed event
         """
         self.log_complete_order(order_completed_event)
+        self.create_sell_order_candidate(order_completed_event)
+    
+    def did_create_sell_order(self, order_created_event):
+        print("sell-YEAH!")
+        order_id: str = order_created_event.order_id
+        market_info = self.order_tracker.get_market_pair_from_order_id(order_id)
+
+        if market_info is not None:
+            limit_order_record = self.order_tracker.get_limit_order(market_info, order_id)
+            order_type = "buy" if limit_order_record.is_buy else "sell"
+            self.log_with_clock(
+                logging.INFO,
+                f"({market_info.trading_pair}) Limit {order_type} order {order_id} "
+                f"({limit_order_record.quantity} {limit_order_record.base_currency} @ "
+                f"{limit_order_record.price} {limit_order_record.quote_currency}) has been created."
+            )
 
     def did_complete_sell_order(self, order_completed_event):
         """
@@ -169,14 +200,3 @@ class MovingAverageCrossover(StrategyPyBase):
         """
         self.log_complete_order(order_completed_event)
 
-    def did_fill_order(self, order_filled_event):
-        """
-        Output log for filled order.
-        :param order_filled_event: Order filled event
-        """
-        order_id: str = order_filled_event.order_id
-        market_info = self.order_tracker.get_shadow_market_pair_from_order_id(order_id)
-
-        if market_info is not None:
-            self.logger().info(f"({market_info.trading_pair}) Limit {order_filled_event.trade_type.name.lower()} order of "
-                               f"{order_filled_event.amount} {market_info.base_asset} filled.")
