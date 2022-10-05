@@ -26,7 +26,7 @@ class MovingAverageCrossover(StrategyPyBase):
             hws_logger = logging.getLogger(__name__)
         return hws_logger
 
-    def __init__(self, exchange, market_info, trading_pair, order_amount, market_swing, ma_crossover, sell_markup):
+    def __init__(self, exchange, market_info, trading_pair, order_amount, market_swing, ma_crossover, sell_markup, cooling_period):
         super().__init__()
         self._market_info = market_info
         self._exchange = exchange
@@ -39,7 +39,7 @@ class MovingAverageCrossover(StrategyPyBase):
         self._connector_ready = False
         self._budget_checker = BudgetChecker(exchange=exchange)
         self.last_ordered_ts: float = 0
-        self._cool_off_interval: float = 10
+        self._cool_off_interval: float = cooling_period | 10
 
     def tick(self, timestamp: float):
         if not self._connector_ready:

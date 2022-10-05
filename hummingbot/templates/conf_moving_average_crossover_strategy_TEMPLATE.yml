@@ -6,3 +6,4 @@ order_amount: null
 market_swing: null
 ma_crossover: null
 sell_markup: null
+cooling_period: null

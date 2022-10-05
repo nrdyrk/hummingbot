@@ -41,6 +41,12 @@ moving_average_crossover_config_map = {
                   validator=lambda v: validate_decimal(v, min_value=Decimal("0"), inclusive=False),
                   prompt_on_new=True,
                   ),
+    "cooling_period":
+        ConfigVar(key="cooling_period",
+                  prompt="How long of a cooling off period between trades? (Enter seconds) >>> ",
+                  type_str="decimal",
+                  validator=lambda v: validate_decimal(v, min_value=Decimal("1"), inclusive=False),
+                  prompt_on_new=True),
     "market_swing":
         ConfigVar(key="market_swing",
                   prompt="Market downturn swing percentage (Enter 1 to indicate 1%) >>> ",
