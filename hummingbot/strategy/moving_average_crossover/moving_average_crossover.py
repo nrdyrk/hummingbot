@@ -1,13 +1,17 @@
 
 import logging
+import statistics
 import time
 from decimal import Decimal
 from statistics import mean
 from typing import List
 import requests
 
+import pandas as pd
+from hummingbot.client.performance import PerformanceMetrics
+
 from hummingbot.core.data_type.order_candidate import OrderCandidate
-from hummingbot.core.event.events import OrderFilledEvent, OrderType, TradeType
+from hummingbot.core.event.events import LimitOrderStatus, OrderFilledEvent, OrderType, TradeType
 from hummingbot.core.rate_oracle.rate_oracle import RateOracle
 from hummingbot.logger import HummingbotLogger
 from hummingbot.strategy.market_trading_pair_tuple import MarketTradingPairTuple
@@ -39,7 +43,7 @@ class MovingAverageCrossover(StrategyPyBase):
         self._connector_ready = False
         self._budget_checker = BudgetChecker(exchange=exchange)
         self.last_ordered_ts: float = 0
-        self._cool_off_interval: float = cooling_period | 10
+        self._cool_off_interval: float = float(cooling_period)
 
     def tick(self, timestamp: float):
         if not self._connector_ready:
@@ -61,7 +65,7 @@ class MovingAverageCrossover(StrategyPyBase):
 
     def create_proposal(self) -> List[OrderCandidate]:
         """
-        Creates and returns a proposal (a list of order candidate), in this strategy the list has 1 element at most.
+        Creates and returns a proposal (a list of order candidates), in this strategy the list has 1 element at most.
         """
         daily_closes = self._get_daily_close_list(self._trading_pair)
         start_index = (-1 * int(self._ma_crossover_period)) - 1
@@ -71,10 +75,11 @@ class MovingAverageCrossover(StrategyPyBase):
         proposal = []
 
         # If the current price (the last close) is below the dip, add a new order candidate to the proposal
-        market_dip_criteria = daily_closes[-1] < avg_close * (Decimal("1") - (Decimal(self._market_swing) / Decimal("100")))
+        # market_dip_criteria = daily_closes[-1] < avg_close * (Decimal("1") - (Decimal(self._market_swing) / Decimal("100")))
+        market_dip_criteria = daily_closes[-1] < avg_close
 
-        buy_signal = "BUY" if market_dip_criteria else "IDLE"
-        print(f"AVG ({self._ma_crossover_period} day): {avg_close} | LAST: {daily_closes[-1]} | {buy_signal}")
+        # buy_signal = "BUY" if market_dip_criteria else "IDLE"
+        # print(f"AVG ({self._ma_crossover_period} day): {avg_close} | LAST: {daily_closes[-1]} | {buy_signal}")
 
         if market_dip_criteria:
             order_price = self._exchange.get_price(self._trading_pair, False)
@@ -90,7 +95,7 @@ class MovingAverageCrossover(StrategyPyBase):
             return
         for order_candidate in proposal:
             if order_candidate.amount > Decimal("0"):
-                order_id = self.buy_with_specific_market(
+                self.buy_with_specific_market(
                     market_trading_pair_tuple=self._market_info,
                     amount=order_candidate.amount,
                     order_type=order_candidate.order_type,
@@ -98,23 +103,23 @@ class MovingAverageCrossover(StrategyPyBase):
                 )
 
                 self.last_ordered_ts = time.time()
-                self.logger().info(f"BUY ORDER: {order_id}")
-                self.logger().info(f"BUY {self._trading_pair} - {order_candidate.amount} @ {order_candidate.price}")
 
     def create_sell_order_candidate(self, order_completed_event):
-
+        """
+        Places sell order based on buy amount and price.
+        """
         order_id: str = order_completed_event.order_id
         market_info = self.order_tracker.get_market_pair_from_order_id(order_id)
 
         if market_info is not None:
             limit_order_record = self.order_tracker.get_limit_order(market_info, order_id)
             if limit_order_record.is_buy:
-                # order_candidate = OrderCandidate(self._trading_pair, False, OrderType.LIMIT, TradeType.SELL, amount, order_price)
                 sell_price = limit_order_record.price + (Decimal(limit_order_record.price) * Decimal(self._sell_markup))
-                amount = self._order_amount / sell_price
+                amount = (limit_order_record.price * limit_order_record.quantity) / sell_price
+                minimum_trade_amount = Decimal(limit_order_record.quantity) - Decimal(0.00001)
                 order_id = self.sell_with_specific_market(
                     market_trading_pair_tuple=self._market_info,
-                    amount=amount,
+                    amount=amount if amount > minimum_trade_amount else minimum_trade_amount,
                     order_type=OrderType.LIMIT,
                     price=sell_price,
                 )
@@ -172,13 +177,15 @@ class MovingAverageCrossover(StrategyPyBase):
 
     def did_complete_buy_order(self, order_completed_event):
         """
-        Output log for completed buy order.
-        :param order_completed_event: Order completed event
+        Output log for completed buy order. This method will also trigger sell order creation.
         """
         self.log_complete_order(order_completed_event)
         self.create_sell_order_candidate(order_completed_event)
-    
+
     def did_create_sell_order(self, order_created_event):
+        """
+        Output log for created sell order.
+        """
         print("sell-YEAH!")
         order_id: str = order_created_event.order_id
         market_info = self.order_tracker.get_market_pair_from_order_id(order_id)
@@ -200,3 +207,69 @@ class MovingAverageCrossover(StrategyPyBase):
         """
         self.log_complete_order(order_completed_event)
 
+    def filled_trades(self):
+        """
+        Returns a list of all filled trades generated from limit orders with the same trade type the strategy
+        has in its configuration
+        """
+        trade_type = TradeType.SELL
+        return [trade
+                for trade
+                in self.trades
+                if trade.trade_type == trade_type.name and trade.order_type == OrderType.LIMIT]
+
+    @property
+    def active_orders(self) -> List[LimitOrderStatus]:
+        limit_orders: List[LimitOrder] = self.order_tracker.active_limit_orders
+        return [o[1] for o in limit_orders]
+
+    async def format_status(self) -> str:
+        """
+        Method called by the `status` command. Generates the status report for this strategy.
+        Outputs the best bid and ask prices of the Order Book.
+        """
+        if not self._connector_ready:
+            return f"{self._exchange.name} connector is not ready..."
+
+        lines = []
+
+        lines.extend(["", "  NRDYRK\n"])
+
+        lines.extend(["", f"  Market: {self._exchange.name} | {self._trading_pair}"])
+
+        daily_closes = self._get_daily_close_list(self._trading_pair)
+        start_index = (-1 * int(self._ma_crossover_period)) - 1
+        avg_close = mean(daily_closes[start_index:-1])
+
+        lines.extend(["", f"  AVG CLOSE ({self._ma_crossover_period} day): {avg_close} | LAST CLOSE: {daily_closes[-1]}"])
+
+        assets_df = self.wallet_balance_data_frame([self._market_info])
+        lines.extend(["", "  Assets:"] + ["    " + line for line in str(assets_df).split("\n")])
+
+        filled_trades = self.filled_trades()
+        lines.extend(["", f"  Closed Trades: {len(filled_trades)}"])
+     
+
+        if len(self.active_orders) > 0:
+            columns = ["Type", "Price", "Amount", "Spread(%)", "Age"]
+            data = []
+            coin_price = self._exchange.get_price(self._trading_pair, False)
+            for order in self.active_orders:
+                spread = abs(order.price - coin_price) / coin_price
+                data.append([
+                    # "BUY" if self._is_buy else "SELL",
+                    "ORDER",
+                    float(order.price),
+                    float(order.quantity),
+                    f"{spread:.3%}",
+                    pd.Timestamp(int(time.time() - (order.creation_timestamp * 1e-6)),
+                                 unit='s').strftime('%H:%M:%S')
+                ])
+
+            df = pd.DataFrame(data=data, columns=columns)
+            lines.extend(["", "  Orders:"] + ["    " + line for line in df.to_string(index=False).split("\n")])
+
+        else:
+            lines.extend(["", "  No active orders."])
+
+        return "\n".join(lines)

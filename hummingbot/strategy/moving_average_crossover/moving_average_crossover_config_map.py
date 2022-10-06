@@ -30,10 +30,10 @@ moving_average_crossover_config_map = {
                   prompt_on_new=True,
                   ),
     "trading_pair": ConfigVar(
-        key="trading_pair",
-        prompt=market_prompt,
-        prompt_on_new=True,
-        ),
+            key="trading_pair",
+            prompt=market_prompt,
+            prompt_on_new=True,
+            ),
     "order_amount":
         ConfigVar(key="order_amount",
                   prompt=order_amount_prompt,
