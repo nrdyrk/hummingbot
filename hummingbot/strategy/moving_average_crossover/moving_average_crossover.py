@@ -30,7 +30,7 @@ class MovingAverageCrossover(StrategyPyBase):
             hws_logger = logging.getLogger(__name__)
         return hws_logger
 
-    def __init__(self, exchange, market_info, trading_pair, order_amount, market_swing, ma_crossover, sell_markup, cooling_period):
+    def __init__(self, exchange, market_info, trading_pair, order_amount, market_swing, ma_crossover, sell_markup, cooling_period, stop_loss):
         super().__init__()
         self._market_info = market_info
         self._exchange = exchange
@@ -44,6 +44,7 @@ class MovingAverageCrossover(StrategyPyBase):
         self._budget_checker = BudgetChecker(exchange=exchange)
         self.last_ordered_ts: float = 0
         self._cool_off_interval: float = float(cooling_period)
+        self._stop_loss = self.convert_number_to_decimal(stop_loss)
 
     def tick(self, timestamp: float):
         if not self._connector_ready:
@@ -59,6 +60,9 @@ class MovingAverageCrossover(StrategyPyBase):
         proposal = self._budget_checker.adjust_candidates(proposal, all_or_none=False)
         if proposal:
             self.execute_proposal(proposal)
+
+        # Run stop loss check
+        self.stop_loss_check()
 
     def all_markets_ready(self):
         return all([market.ready for market in self.active_markets])
@@ -115,11 +119,17 @@ class MovingAverageCrossover(StrategyPyBase):
             limit_order_record = self.order_tracker.get_limit_order(market_info, order_id)
             if limit_order_record.is_buy:
                 sell_price = limit_order_record.price + (Decimal(limit_order_record.price) * Decimal(self._sell_markup))
-                amount = (limit_order_record.price * limit_order_record.quantity) / sell_price
-                minimum_trade_amount = Decimal(limit_order_record.quantity) - Decimal(0.00001)
+                # print(f"orig amount: {limit_order_record.quantity}")
+                # amount = (limit_order_record.price * limit_order_record.quantity) / sell_price
+                # print(f"sell amount: {amount}")
+                last_trade_value_usd = Decimal(limit_order_record.quantity) / Decimal(limit_order_record.price)
+                trade_amount = last_trade_value_usd / sell_price
+                minimum_trade_amount = Decimal(limit_order_record.quantity) - Decimal("0.00001")
+                calculated_trade_amount = trade_amount if trade_amount > minimum_trade_amount else minimum_trade_amount
+                # print(f"min amount: {minimum_trade_amount}")
                 order_id = self.sell_with_specific_market(
                     market_trading_pair_tuple=self._market_info,
-                    amount=amount if amount > minimum_trade_amount else minimum_trade_amount,
+                    amount=calculated_trade_amount,
                     order_type=OrderType.LIMIT,
                     price=sell_price,
                 )
@@ -186,7 +196,6 @@ class MovingAverageCrossover(StrategyPyBase):
         """
         Output log for created sell order.
         """
-        print("sell-YEAH!")
         order_id: str = order_created_event.order_id
         market_info = self.order_tracker.get_market_pair_from_order_id(order_id)
 
@@ -248,7 +257,6 @@ class MovingAverageCrossover(StrategyPyBase):
 
         filled_trades = self.filled_trades()
         lines.extend(["", f"  Closed Trades: {len(filled_trades)}"])
-     
 
         if len(self.active_orders) > 0:
             columns = ["Type", "Price", "Amount", "Spread(%)", "Age"]
@@ -273,3 +281,19 @@ class MovingAverageCrossover(StrategyPyBase):
             lines.extend(["", "  No active orders."])
 
         return "\n".join(lines)
+
+    def stop_loss_check(self):
+        max_spread: float = self._stop_loss
+        coin_price = self._exchange.get_price(self._trading_pair, False)
+        for order in self.active_orders:
+            order_spread = abs(order.price - coin_price) / coin_price
+            if order_spread > max_spread:
+                # Cancel order
+                self.cancel_order(self._market_info, order.client_order_id)
+                # Sell off order
+                self.sell_with_specific_market(
+                    market_trading_pair_tuple=self._market_info,
+                    amount=order.quantity,
+                    order_type=OrderType.LIMIT,
+                    price=coin_price,
+                )

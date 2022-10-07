@@ -12,6 +12,7 @@ def start(self):
         ma_crossover = c_map.get("ma_crossover").value
         sell_markup = c_map.get("sell_markup").value
         cooling_period = c_map.get("cooling_period").value
+        stop_loss = c_map.get("stop_loss").value
 
         self._initialize_markets([(connector, [trading_pair])])
         base, quote = trading_pair.split("-")
@@ -27,6 +28,7 @@ def start(self):
                                                ma_crossover=ma_crossover,
                                                sell_markup=sell_markup,
                                                cooling_period=cooling_period,
+                                               stop_loss=stop_loss
                                                )
 
     except Exception as e:

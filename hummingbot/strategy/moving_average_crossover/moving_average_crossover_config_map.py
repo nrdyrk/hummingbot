@@ -9,8 +9,6 @@ def market_prompt() -> str:
     return f"Enter the token trading pair on {connector} >>> "
 
 # Order amount
-
-
 def order_amount_prompt() -> str:
     trading_pair = moving_average_crossover_config_map["trading_pair"].value
     base_asset, quote_asset = trading_pair.split("-")
@@ -63,6 +61,13 @@ moving_average_crossover_config_map = {
     "sell_markup":
         ConfigVar(key="sell_markup",
                   prompt="Profit markup percentage (Enter 1 to indicate 1%) >>> ",
+                  type_str="decimal",
+                  validator=lambda v: validate_decimal(v, 0, 100, inclusive=False),
+                  prompt_on_new=True,
+                  ),
+    "stop_loss":
+        ConfigVar(key="stop_loss",
+                  prompt="Stop loss percentage (Enter 1 to indicate 1%) >>> ",
                   type_str="decimal",
                   validator=lambda v: validate_decimal(v, 0, 100, inclusive=False),
                   prompt_on_new=True,
