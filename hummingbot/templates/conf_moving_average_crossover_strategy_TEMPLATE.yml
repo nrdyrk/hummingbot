@@ -1,0 +1,10 @@
+template_version: 1
+strategy: null
+connector: null
+trading_pair: null
+order_amount: null
+cooling_period: null
+market_swing: null
+ma_crossover: null
+sell_markup: null
+stop_loss: null
