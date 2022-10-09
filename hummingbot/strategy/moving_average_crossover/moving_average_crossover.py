@@ -79,8 +79,8 @@ class MovingAverageCrossover(StrategyPyBase):
         proposal = []
 
         # If the current price (the last close) is below the dip, add a new order candidate to the proposal
-        # market_dip_criteria = daily_closes[-1] < avg_close * (Decimal("1") - (Decimal(self._market_swing) / Decimal("100")))
-        market_dip_criteria = daily_closes[-1] < avg_close
+        market_dip_criteria = daily_closes[-1] < avg_close * (Decimal("1") - Decimal(self._market_swing))
+        # market_dip_criteria = daily_closes[-1] < avg_close
 
         # buy_signal = "BUY" if market_dip_criteria else "IDLE"
         # print(f"AVG ({self._ma_crossover_period} day): {avg_close} | LAST: {daily_closes[-1]} | {buy_signal}")
@@ -160,7 +160,7 @@ class MovingAverageCrossover(StrategyPyBase):
 
         url = "https://api.binance.com/api/v3/klines"
         params = {"symbol": trading_pair.replace("-", ""),
-                  "interval": "1d"}
+                  "interval": "15m"}
         records = requests.get(url=url, params=params).json()
         return [Decimal(str(record[4])) for record in records]
 
@@ -242,15 +242,16 @@ class MovingAverageCrossover(StrategyPyBase):
 
         lines = []
 
-        lines.extend(["", "  NRDYRK\n"])
+        lines.extend(["", "  NRDYRK"])
 
         lines.extend(["", f"  Market: {self._exchange.name} | {self._trading_pair}"])
 
         daily_closes = self._get_daily_close_list(self._trading_pair)
         start_index = (-1 * int(self._ma_crossover_period)) - 1
         avg_close = mean(daily_closes[start_index:-1])
+        target_price = avg_close * (Decimal("1") - Decimal(self._market_swing))
 
-        lines.extend(["", f"  AVG CLOSE ({self._ma_crossover_period} day): {avg_close} | LAST CLOSE: {daily_closes[-1]}"])
+        lines.extend(["", f"  AVG({int(self._ma_crossover_period)}d): {avg_close} | BUY: {target_price} | LAST: {daily_closes[-1]}"])
 
         assets_df = self.wallet_balance_data_frame([self._market_info])
         lines.extend(["", "  Assets:"] + ["    " + line for line in str(assets_df).split("\n")])
