@@ -6,6 +6,8 @@ from decimal import Decimal
 from statistics import mean
 from typing import List
 import requests
+import talib
+import numpy
 
 import pandas as pd
 from hummingbot.client.performance import PerformanceMetrics
@@ -73,6 +75,11 @@ class MovingAverageCrossover(StrategyPyBase):
         """
         daily_closes = self._get_daily_close_list(self._trading_pair)
         start_index = (-1 * int(self._ma_crossover_period)) - 1
+
+        # Trading signals
+        trading_signals = self.get_trading_signals(self._trading_pair)
+   
+        print(trading_signals)
 
         # Calculate the average of the X element prior to the last element
         avg_close = mean(daily_closes[start_index:-1])
@@ -163,6 +170,46 @@ class MovingAverageCrossover(StrategyPyBase):
                   "interval": "15m"}
         records = requests.get(url=url, params=params).json()
         return [Decimal(str(record[4])) for record in records]
+
+    def get_daily_close_numpy(self, trading_pair: str) -> List[Decimal]:
+        """
+        :param trading_pair: A market trading pair to
+        :return: A list of daily close
+        """
+
+        url = "https://api.binance.com/api/v3/klines"
+        params = {"symbol": trading_pair.replace("-", ""),
+                  "interval": "15m"}
+        records = requests.get(url=url, params=params).json()
+        return [float(str(record[4])) for record in records]
+
+    def get_trading_signals(self, trading_pair: str):
+        """
+        :param trading_pair: A market trading pair to
+        :return: A list of daily close
+        """
+        url = "https://api.binance.com/api/v3/klines"
+        params = {"symbol": trading_pair.replace("-", ""),
+                  "interval": "15m"}
+        records = requests.get(url=url, params=params).json()
+
+        # o = numpy.array([float(str(record[1])) for record in records])
+        high = numpy.array([float(str(record[2])) for record in records])
+        low = numpy.array([float(str(record[3])) for record in records])
+        # close = numpy.array([float(str(record[4])) for record in records])
+
+        pattern_output = {}
+
+        aroon_oscillator = self.get_aroon_oscillator(high, low, int(self._ma_crossover_period))
+
+        pattern_output['aroon_oscillator'] = aroon_oscillator
+
+        return pattern_output
+
+    # Signals
+    def get_aroon_oscillator(self, high, low, timeperiod=14):
+        pattern_output = talib.AROONOSC(high, low, timeperiod)
+        return pattern_output[-1]
 
     def convert_number_to_decimal(self, number) -> Decimal:
         return Decimal(number) / Decimal("100")
